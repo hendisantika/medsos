@@ -28,8 +28,11 @@ func New(address string, db *mgo.Database, root string) (*Medsos, error) {
 // initRouter initialize router and handler
 func (m *Medsos) initRouter(root string) {
 	m.router = mux.NewRouter()
+	m.router.HandleFunc(root+"register", m.registerActor).Methods("POST")
 	m.router.HandleFunc(root+"feeds", m.postActivity).Methods("POST")
 	m.router.HandleFunc(root+"feeds/{actor}/", m.getFeeds)
+	m.router.HandleFunc(root+"follow/{actor}/", m.follow).Methods("POST")
+	m.router.HandleFunc(root+"follow/{actor}/{friend}", m.unfollow).Methods("DELETE")
 }
 
 // ListendAndServe listens for request
@@ -37,11 +40,16 @@ func (m *Medsos) ListenAndServe() error {
 	return http.ListenAndServe(m.address, m.router)
 }
 
+// ActorName is used for encode/decode json/bson data
+type ActorName struct {
+	Name string `json:"actor" bson:"actor"`
+}
+
 // Actor is Medsos actor
 type Actor struct {
 	Id      bson.ObjectId `json:"id" bson:"_id,omitempty"`
-	Name    string        `json:"actor" bson:"name"`
-	Friends []Actor       `json:"friends" bson:"friends"`
+	Name    string        `json:"actor" bson:"actor"`
+	Friends []ActorName   `json:"friends" bson:"friends"`
 }
 
 // Activity is Medsos activity
@@ -58,11 +66,13 @@ type Activity struct {
 func jsonResponse(w http.ResponseWriter, statusCode int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	encoder := json.NewEncoder(w)
-	err := encoder.Encode(payload)
-	if err != nil {
-		log.Printf("error encoding json: %v", err.Error())
-		jsonErrorResponse(w, http.StatusInternalServerError, "error encoding json")
+	if payload != nil {
+		encoder := json.NewEncoder(w)
+		err := encoder.Encode(payload)
+		if err != nil {
+			log.Printf("error encoding json: %v", err.Error())
+			jsonErrorResponse(w, http.StatusInternalServerError, "error encoding json")
+		}
 	}
 }
 
@@ -121,7 +131,6 @@ func (m *Medsos) getFeeds(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		jsonErrorResponse(w, http.StatusNotFound, "actor not found")
 	} else {
-		w.WriteHeader(http.StatusOK)
 		feeds := m.db.C("feeds")
 		var activity []Activity
 		err := feeds.Find(bson.M{"actor": actor}).All(&activity)
@@ -131,5 +140,68 @@ func (m *Medsos) getFeeds(w http.ResponseWriter, r *http.Request) {
 		} else {
 			jsonResponse(w, http.StatusOK, activity)
 		}
+	}
+}
+
+// follow follows specific actor
+func (m *Medsos) follow(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name, ok := vars["actor"]
+	var friend ActorName
+	decoder := json.NewDecoder(r.Body)
+	decoder.Decode(&friend)
+	if !ok {
+		jsonErrorResponse(w, http.StatusNotFound, "actor not found")
+	} else {
+		actors := m.db.C("actor")
+		var actor Actor
+		err := actors.Find(bson.M{"actor": name}).One(&actor)
+		if err != nil {
+			log.Printf("Error querying actor: %v\n", err.Error())
+			jsonErrorResponse(w, http.StatusInternalServerError, "error querying actor, try again later")
+		} else {
+			change := bson.M{"$push": bson.M{"friends": friend.Name}}
+			err = actors.Update(bson.M{"_id": actor.Id}, change)
+			if err != nil {
+				log.Printf("Error updating actor: %v\n", err.Error())
+				jsonErrorResponse(w, http.StatusInternalServerError, "error updating actor, try again later")
+			} else {
+				jsonResponse(w, http.StatusNoContent, nil)
+			}
+		}
+	}
+}
+
+// unfollow delete specific friend from friend list
+func (m *Medsos) unfollow(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name, ok := vars["actor"]
+	if !ok {
+		jsonErrorResponse(w, http.StatusNotFound, "actor not found")
+		return
+	}
+
+	friend, ok := vars["friend"]
+	if !ok {
+		jsonErrorResponse(w, http.StatusNotFound, "friend not found")
+		return
+	}
+
+	actors := m.db.C("actor")
+	var actor Actor
+	err := actors.Find(bson.M{"actor": name, "friends": friend}).One(&actor)
+	if err != nil {
+		log.Printf("Error querying actor: %v\n", err.Error())
+		jsonErrorResponse(w, http.StatusInternalServerError, "error querying actor, try again later")
+		return
+	}
+
+	change := bson.M{"$pull": bson.M{"friends": friend}}
+	err = actors.Update(bson.M{"_id": actor.Id}, change)
+	if err != nil {
+		log.Printf("Error updating actor: %v\n", err.Error())
+		jsonErrorResponse(w, http.StatusInternalServerError, "error updating actor, try again later")
+	} else {
+		jsonResponse(w, http.StatusNoContent, nil)
 	}
 }
