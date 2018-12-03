@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// Medsos is media social API server
 type Medsos struct {
 	address string
 	db      *mgo.Database
@@ -17,28 +18,33 @@ type Medsos struct {
 	router  *mux.Router
 }
 
+// New creates new Medsos instance
 func New(address string, db *mgo.Database, root string) (*Medsos, error) {
 	medsos := Medsos{address: address, db: db, root: root}
 	medsos.initRouter(root)
 	return &medsos, nil
 }
 
+// initRouter initialize router and handler
 func (m *Medsos) initRouter(root string) {
 	m.router = mux.NewRouter()
 	m.router.HandleFunc(root+"feeds", m.postActivity).Methods("POST")
 	m.router.HandleFunc(root+"feeds/{actor}/", m.getFeeds)
 }
 
+// ListendAndServe listens for request
 func (m *Medsos) ListenAndServe() error {
 	return http.ListenAndServe(m.address, m.router)
 }
 
+// Actor is Medsos actor
 type Actor struct {
 	Id      bson.ObjectId `json:"id" bson:"_id,omitempty"`
 	Name    string        `json:"actor" bson:"name"`
 	Friends []Actor       `json:"friends" bson:"friends"`
 }
 
+// Activity is Medsos activity
 type Activity struct {
 	Id      bson.ObjectId `json:"id" bson:"_id,omitempty"`
 	Actor   string        `json:"actor" bson:"actor"`
@@ -48,6 +54,7 @@ type Activity struct {
 	Related bson.ObjectId `json:"related_id" bson:"related_id,omitempty"`
 }
 
+// jsonResponse writes json data as response
 func jsonResponse(w http.ResponseWriter, statusCode int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
@@ -59,10 +66,12 @@ func jsonResponse(w http.ResponseWriter, statusCode int, payload interface{}) {
 	}
 }
 
+// jsonErrorResponse writes error message as json
 func jsonErrorResponse(w http.ResponseWriter, statusCode int, message string) {
 	jsonResponse(w, statusCode, map[string]string{"message": message})
 }
 
+// registerActor registers new Medsos actor
 func (m *Medsos) registerActor(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	var actor Actor
@@ -83,6 +92,7 @@ func (m *Medsos) registerActor(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// postActivity posts new activity
 func (m *Medsos) postActivity(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	var activity Activity
@@ -104,6 +114,7 @@ func (m *Medsos) postActivity(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// getFeeds get feeds for specific actor
 func (m *Medsos) getFeeds(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	actor, ok := vars["actor"]
